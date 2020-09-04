@@ -5,6 +5,8 @@ from time import sleep
 from datetime import datetime
 import subprocess
 from math import isnan
+from configparser import ConfigParser
+import json
 
 # Picamera
 from picamera import mmal, mmalobj as mo, PiCameraPortDisabled
@@ -12,6 +14,9 @@ from PIL import Image, ImageDraw, ImageFont
 
 # GPS
 from gps import gps, WATCH_ENABLE, WATCH_NEWSTYLE
+
+# memcache
+from pymemcache.client.base import Client
 
 
 class DashCamData(mo.MMALPythonComponent):
@@ -95,6 +100,8 @@ class DashCamData(mo.MMALPythonComponent):
         self.__gps.next()
         self.__gps_thread = None
 
+        self.__mc_client = Client(('127.0.0.1', 11211))
+
         # Set first speed so we don't print
         # nan as first value
         self.__current_speed = 0
@@ -133,22 +140,28 @@ class DashCamData(mo.MMALPythonComponent):
             self.__gps_thread = None
 
     def _gps_loop(self):
+        """
+        This wasnt fast enough, we instead
+        get the current speeds and location from 
+        memcache. sadface.jpg
+        """
         while self.enabled:
-            if self.__gps.waiting():
-                self.__gps.next()
+#            if self.__gps.waiting():
+#                self.__gps.next()
 
-            # set speed to 0 if we don't have a fix to gps sattelites
-            speed = 0 if isnan(self.__gps.fix.speed) else self.__gps.fix.speed
+ #           # set speed to 0 if we don't have a fix to gps sattelites
+            gps_data = json.loads(self.__mc_client.get("last_location")) 
+            speed = int(float(gps_data["speed"])*3.6)
+
             # Only update the speed if we have a speed of
             # > 0. We do this because, perhaps we lost the gps fix by
             # traveling through a tunnel, or in a garage.
             # If we lost it due to the mentioned reasons we can _probably_
             # assume we're going at the same speed and should display that.
-            if speed > 0:
-                with self._lock:
-                    # We get the speed in meters per second.
-                    # Hence we calculate it to kilometers per hour
-                    self.__current_speed = int(speed * 3.6)
+            with self._lock:
+                # We get the speed in meters per second.
+                # Hence we calculate it to kilometers per hour
+                self.__current_speed = int(speed * 3.6)
 
             # Sleep so that we make the thread release the GIL
             sleep(1)
@@ -182,7 +195,7 @@ class DashCamData(mo.MMALPythonComponent):
                 self.dashcam_overlay_text_image = img
 
             # Sleep to release the GIL.
-            sleep(1)
+            sleep(0.5)
 
     def _handle_frame(self, port, buf):
         # We check if we have data for the frame
@@ -250,21 +263,29 @@ class DashCamData(mo.MMALPythonComponent):
 
 
 class DashCam:
-    def __init__(
-            self,
-            title="RaspberryDashCam",
-            resolution=(1280, 720),
-            fps=25,
-            bitrate=4000000
-            ):
+    def __init__(self):
+
+        self.__resolutions = {
+                # 'short': [fps, (width, height)]
+                '720p': [30, (1280, 720)],
+                '1080p': [24, (1920, 1080)],
+                }
+        self.__config = ConfigParser()
+
+        self.__config.read("/etc/raspberrydashcam/config.ini")
+
         # Set up the basic stuff
-        self._title = title
-        self._resolution = resolution
-        self._fps = fps
-        self._bitrate = bitrate
+        self._title = self.__config["dashcam"]["title"]
+        self._fps, self._resolution = self.__resolutions[
+                self.__config["camera"]["resolution"]
+                ]
+
+        self._bitrate = int(self.__config["camera"]["bitrate"])
 
         # Create the filename that we're going to record to.
-        self._filename = datetime.now().strftime("%Y-%m-%d-%H-%M-%S.mp4")
+        self._filename = datetime.now().strftime(
+                "/mnt/storage/%Y-%m-%d-%H-%M-%S.mp4"
+                )
 
         # This is just a place holder.
         self.__fmpeg_instance = None
@@ -272,9 +293,11 @@ class DashCam:
         # This is the ffmpeg command we will run
         self.__ffmpeg_command = [
                 "/usr/bin/ffmpeg",
-                "-loglevel quiet -stats",
+                #"-loglevel quiet -stats",
                 "-async",
-                "7",
+                "1",
+                "-vsync",
+                "1",
                 "-ar",
                 "44100",
                 "-ac",
@@ -297,13 +320,18 @@ class DashCam:
                 "10240",
                 "-i",
                 "-",  # Read from stdin
+                "-crf",
+                "22",
                 "-vcodec",
                 "copy",
                 "-acodec",
                 "aac",
                 "-ab",
                 "128k",
-                "-g 48",
+                "-g",
+                str(self._fps * 2),  # GOP should be double the fps.
+                "-r",
+                str(self._fps),
                 "-f",
                 "mp4",
                 self._filename
@@ -361,13 +389,59 @@ class DashCam:
         # which I do not yet know what they do.
         self.__encoder.outputs[0].params[
                 mmal.MMAL_PARAMETER_VIDEO_ENCODE_INLINE_HEADER] = True
-        self.__encoder.outputs[0].params[mmal.MMAL_PARAMETER_INTRAPERIOD] = 30
+        self.__encoder.outputs[0].params[mmal.MMAL_PARAMETER_INTRAPERIOD] = 48
         self.__encoder.outputs[0].params[
-                mmal.MMAL_PARAMETER_VIDEO_ENCODE_INITIAL_QUANT] = 22
+                mmal.MMAL_PARAMETER_VIDEO_ENCODE_INITIAL_QUANT] = 17
         self.__encoder.outputs[0].params[
-                mmal.MMAL_PARAMETER_VIDEO_ENCODE_MAX_QUANT] = 22
+                mmal.MMAL_PARAMETER_VIDEO_ENCODE_MAX_QUANT] = 17
         self.__encoder.outputs[0].params[
-                mmal.MMAL_PARAMETER_VIDEO_ENCODE_MIN_QUANT] = 22
+                mmal.MMAL_PARAMETER_VIDEO_ENCODE_MIN_QUANT] = 17
+
+        # Stolen from picamera module, very clever stuff
+        self.__mirror_parameter = {
+                (False, False): mmal.MMAL_PARAM_MIRROR_NONE,
+                (True,  False): mmal.MMAL_PARAM_MIRROR_VERTICAL,
+                (False, True):  mmal.MMAL_PARAM_MIRROR_HORIZONTAL,
+                (True,  True):  mmal.MMAL_PARAM_MIRROR_BOTH,
+                }
+
+        # Set initial values
+        self.vflip = self.hflip = False
+
+        # Get actual config values from config
+        if self.__config["camera"].getboolean("vflip"):
+            self.set_vflip(True)
+        if self.__config["camera"].getboolean("hflip"):
+            self.set_hflip(True)
+        self.__camera.control.params[mmal.MMAL_PARAMETER_VIDEO_STABILISATION] = True
+        mp = self.__camera.control.params[mmal.MMAL_PARAMETER_EXPOSURE_MODE]
+        print(mp)
+        mp.value = mmal.MMAL_PARAM_EXPOSUREMODE_AUTO
+        self.__camera.control.params[mmal.MMAL_PARAMETER_EXPOSURE_MODE] = mp
+        mp = self.__camera.control.params[mmal.MMAL_PARAMETER_AWB_MODE]
+        mp.value = mmal.MMAL_PARAM_AWBMODE_HORIZON
+        self.__camera.control.params[mmal.MMAL_PARAMETER_AWB_MODE] = mp
+
+
+    def set_hflip(self, value):
+        """
+        Sets hflip, matches the pair with what's in
+        self.__mirror_parameter.
+        """
+        value = self.__mirror_parameter[(self.vflip, bool(value))]
+        for port in self.__camera.outputs:
+            port.params[mmal.MMAL_PARAMETER_MIRROR] = value
+        self.hflip = True
+
+    def set_vflip(self, value):
+        """
+        Sets vflip, matches the pair with what's in
+        self.__mirror_parameter.
+        """
+        value = self.__mirror_parameter[(bool(value), self.hflip)]
+        for port in self.__camera.outputs:
+            port.params[mmal.MMAL_PARAMETER_MIRROR] = value
+        self.vflip = True
 
     def connect(self):
         """
@@ -378,8 +452,8 @@ class DashCam:
 
         # DashCamData has two outputs, we give one to preview window and one
         # to encoder
-        self.__preview.inputs[0].connect(self.__DashCamData.outputs[0])
-        self.__encoder.inputs[0].connect(self.__DashCamData.outputs[1])
+        self.__preview.inputs[0].connect(self.__DashCamData.outputs[1])
+        self.__encoder.inputs[0].connect(self.__DashCamData.outputs[0])
 
         # Now connect target with the encoder output so we write video
         self.__target.inputs[0].connect(self.__encoder.outputs[0])
@@ -423,7 +497,7 @@ class DashCam:
         This is black magic looping.
         """
         while 1:
-            sleep(1)
+            sleep(5)
 
 
 if __name__ == '__main__':
