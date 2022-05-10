@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 # Stdlibs
+from configparser import ConfigParser
+from datetime import datetime
 from threading import Thread, Lock
 from time import sleep
-from datetime import datetime
-import subprocess
-from math import isnan
-from configparser import ConfigParser
 import json
+import subprocess
 
 # Picamera
 from picamera import mmal, mmalobj as mo, PiCameraPortDisabled
@@ -20,13 +19,16 @@ from pymemcache.client.base import Client
 
 
 class DashCamData(mo.MMALPythonComponent):
+    """
+    This is to make pylint happy
+    """
     def __init__(self, resolution=(1280, 720), title="Test dashcam"):
         """
         This is where we go bob ross on the frames
         Happy little mistakes
         """
         # We also need to initialize the class we inherited for some reason.
-        super(DashCamData, self).__init__(name='py.prutt', outputs=2)
+        super().__init__(name='py.prutt', outputs=2)
         self._lock = Lock()
         self.inputs[0].supported_formats = {mmal.MMAL_ENCODING_I420}
 
@@ -106,11 +108,8 @@ class DashCamData(mo.MMALPythonComponent):
         # nan as first value
         self.__current_speed = 0
 
-        # This might be implemented later
-        self.__bearing = None
-
     def enable(self):
-        super(DashCamData, self).enable()
+        super().enable()
 
         # Start gps thread
         self.__gps_thread = Thread(
@@ -128,7 +127,7 @@ class DashCamData(mo.MMALPythonComponent):
         self.dashcam_overlay_text_thread.start()
 
     def disable(self):
-        super(DashCamData, self).disable()
+        super().disable()
         if self.dashcam_overlay_text_thread:
             self.dashcam_overlay_text_thread.join()
             self.dashcam_overlay_text_thread = None
@@ -142,7 +141,7 @@ class DashCamData(mo.MMALPythonComponent):
     def _gps_loop(self):
         """
         This wasnt fast enough, we instead
-        get the current speeds and location from 
+        get the current speeds and location from
         memcache. sadface.jpg
         """
         while self.enabled:
@@ -150,7 +149,7 @@ class DashCamData(mo.MMALPythonComponent):
 #                self.__gps.next()
 
  #           # set speed to 0 if we don't have a fix to gps sattelites
-            gps_data = json.loads(self.__mc_client.get("last_location")) 
+            gps_data = json.loads(self.__mc_client.get("last_location"))
             speed = int(float(gps_data["speed"])*3.6)
 
             # Only update the speed if we have a speed of
@@ -261,7 +260,12 @@ class DashCamData(mo.MMALPythonComponent):
 
 
 class DashCam:
+    """
+    This is also to make pylint happy
+    """
     def __init__(self):
+
+        self.__enabled = False
 
         self.__resolutions = {
                 # 'short': [fps, (width, height)]
@@ -285,8 +289,6 @@ class DashCam:
                 "/mnt/storage/%Y-%m-%d-%H-%M-%S.mp4"
                 )
 
-        # This is just a place holder.
-        self.__fmpeg_instance = None
 
         # This is the ffmpeg command we will run
         self.__ffmpeg_command = [
@@ -338,7 +340,7 @@ class DashCam:
         self.__camera = mo.MMALCamera()
         self.__preview = mo.MMALRenderer()
         self.__encoder = mo.MMALVideoEncoder()
-        self.__DashCamData = DashCamData(
+        self.__dashcam_data = DashCamData(
                 title=self._title,
                 resolution=self._resolution
                 )
@@ -446,12 +448,12 @@ class DashCam:
         Connect and enable everything
         """
         # Give our DashCamData renderer the camera video output
-        self.__DashCamData.inputs[0].connect(self.__camera.outputs[0])
+        self.__dashcam_data.inputs[0].connect(self.__camera.outputs[0])
 
         # DashCamData has two outputs, we give one to preview window and one
         # to encoder
-        self.__preview.inputs[0].connect(self.__DashCamData.outputs[1])
-        self.__encoder.inputs[0].connect(self.__DashCamData.outputs[0])
+        self.__preview.inputs[0].connect(self.__dashcam_data.outputs[1])
+        self.__encoder.inputs[0].connect(self.__dashcam_data.outputs[0])
 
         # Now connect target with the encoder output so we write video
         self.__target.inputs[0].connect(self.__encoder.outputs[0])
@@ -460,32 +462,35 @@ class DashCam:
         self.__target.connection.enable()
         self.__encoder.connection.enable()
         self.__preview.connection.enable()
-        self.__DashCamData.connection.enable()
+        self.__dashcam_data.connection.enable()
 
         # And now we enable the components themselves
         self.__target.enable()
         self.__encoder.enable()
         self.__preview.enable()
-        self.__DashCamData.enable()
+        self.__dashcam_data.enable()
+        self.__enabled = True
 
     def disconnect(self):
         """
         Tear everything down, it probably means we're shutting down.
         """
+
         # First disable the components
         self.__target.disable()
         self.__encoder.disable()
         self.__preview.disable()
-        self.__DashCamData.disable()
+        self.__dashcam_data.disable()
 
         # Now disconnect the outputs and inputs
         self.__target.inputs[0].disconnect()
         self.__encoder.inputs[0].disconnect()
         self.__preview.inputs[0].disconnect()
-        self.__DashCamData.inputs[0].disconnect()
+        self.__dashcam_data.inputs[0].disconnect()
 
         # Shut down ffmpeg recording
         self.__ffmpeg_instance.terminate()
+        self.__enabled = False
 
     def run(self):
         """
@@ -494,7 +499,7 @@ class DashCam:
 
         This is black magic looping.
         """
-        while 1:
+        while self.__enabled:
             sleep(5)
 
 
