@@ -176,18 +176,16 @@ class DashCamData(mo.MMALPythonComponent):
             # bar in __init__ we save mucho time here.
             img = self.bottom_bar_bg.copy()
             now = datetime.now()
-            s = "---" if self.__current_speed == 0 else self.__current_speed
-            dashcam_string = " {} {} km/h ".format(
-                    now.strftime("%Y-%m-%d %H:%M:%S"),
-                    s
-                    )
+            date = f"{now.year}-{now.month}-{now.day} {now.hour}:{now.minute}:{now.second}"
+            speed = "---" if self.__current_speed == 0 else self.__current_speed
+
 
             # We start drawing the text over the black opaque
             # rectangle we just created.
             draw = ImageDraw.Draw(img)
             draw.text(
                     (5, -5),
-                    dashcam_string,
+                    f" {date} {speed} km/h",
                     font=self.__font
                     )
 
