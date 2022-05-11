@@ -11,10 +11,10 @@ Dashcam software designed to run on Raspberry Pi.
 * For best performance use python 3.10 (`3.10.4` is currently the newest). 
 
 ### 720p
-Tested with Raspberry Pi 3B+ and working fine.
+Tested with Raspberry Pi 3B+ and working fine. Audio is synced properly and running full FPS.
 
 ### 1080p
-Kind of works with Raspberry Pi 3B+. It sometimes lags though. I suspect CPU/GPU throttling because of heat since I lack heat sinks/cooling.
+Kind of works with Raspberry Pi 3B+. It sometimes lags though. I suspect CPU/GPU throttling because of heat since I lack heat sinks/cooling. 
 
 
 # Example video
