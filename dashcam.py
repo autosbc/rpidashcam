@@ -220,18 +220,16 @@ class DashCamData(mo.MMALPythonComponent):
                 # use locking to be able to quickly do what we want to do
                 # And then gtfo
                 with self._lock:
-                    if self.dashcam_overlay_text_image:
+                    #if self.dashcam_overlay_text_image:
                         # Paste our overlay over the text
                         img.paste(
                                 self.dashcam_overlay_text_image,
-                                self.bottom_bar_position,
-                                self.dashcam_overlay_text_image
+                                self.bottom_bar_position
                                 )
-                    if self.dashcam_title_image:
+                    #if self.dashcam_title_image:
                         img.paste(
                                 self.dashcam_title_image,
-                                (0, 0),
-                                self.dashcam_title_image
+                                (0, 0)
                                 )
 
             # If we have a second output that is probably the preview.
@@ -378,7 +376,7 @@ class DashCam:
         # Modify the proflle
         # Set the profile to MMAL_VIDEO_PROFILE_H264_HIGH
         profile.profile[0].profile = mmal.MMAL_VIDEO_PROFILE_H264_HIGH
-        profile.profile[0].level = mmal.MMAL_VIDEO_LEVEL_H264_41
+        profile.profile[0].level = mmal.MMAL_VIDEO_LEVEL_H264_4
 
         # Now make sure encoder get's the modified profile
         self.__encoder.outputs[0].params[mmal.MMAL_PARAMETER_PROFILE] = profile
@@ -497,7 +495,7 @@ class DashCam:
         This is black magic looping.
         """
         while self.__enabled:
-            sleep(5)
+            sleep(10)
 
 
 if __name__ == '__main__':
