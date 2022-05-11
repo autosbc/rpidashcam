@@ -6,7 +6,7 @@ Dashcam software designed to run on Raspberry Pi.
 * USB microphone or similar
 * USB GPS module
 * External storage
-* Camera module (HQ camera prefered but should work with any other camera that is supported by raspios).
+* Camera module (HQ camera prefered but should work with any other camera that is supported by raspios) I use [Arducam B0241](https://www.arducam.com/product/b0241-arducam-imx477-hq-camera-6/) (IMX477).
 * 32 bit version of raspbian (until libcamera has a saner less bloated alternative to [picamera2](https://github.com/raspberrypi/picamera2))
 * For best performance use python 3.10 (`3.10.4` is currently the newest). 
 
