@@ -2,6 +2,7 @@
 # Stdlibs
 from configparser import ConfigParser
 from datetime import datetime
+from math import isnan
 from threading import Thread, Lock
 from time import sleep
 import json
@@ -13,9 +14,6 @@ from PIL import Image, ImageDraw, ImageFont
 
 # GPS
 from gps import gps, WATCH_ENABLE, WATCH_NEWSTYLE
-
-# memcache
-from pymemcache.client.base import Client
 
 
 class DashCamData(mo.MMALPythonComponent):
@@ -102,7 +100,6 @@ class DashCamData(mo.MMALPythonComponent):
         self.__gps.next()
         self.__gps_thread = None
 
-        self.__mc_client = Client(('127.0.0.1', 11211))
 
         # Set first speed so we don't print
         # nan as first value
@@ -140,17 +137,15 @@ class DashCamData(mo.MMALPythonComponent):
 
     def _gps_loop(self):
         """
-        This wasnt fast enough, we instead
-        get the current speeds and location from
-        memcache. sadface.jpg
+        This is a loop for the gps part.
         """
         while self.enabled:
-#            if self.__gps.waiting():
-#                self.__gps.next()
+            if self.__gps.waiting():
+                self.__gps.next()
 
- #           # set speed to 0 if we don't have a fix to gps sattelites
-            gps_data = json.loads(self.__mc_client.get("last_location"))
-            speed = int(float(gps_data["speed"])*3.6)
+            # set speed to 0 if we don't have a fix to gps sattelites
+            speed = 0 if isnan(self.__gps.fix.speed) else self.__gps.fix.speed
+            #speed = int(float(gps_data["speed"])*3.6)
 
             # Only update the speed if we have a speed of
             # > 0. We do this because, perhaps we lost the gps fix by
@@ -163,7 +158,7 @@ class DashCamData(mo.MMALPythonComponent):
                 self.__current_speed = int(speed * 3.6)
 
             # Sleep so that we make the thread release the GIL
-            sleep(1)
+            sleep(0.3)
 
     def _dashcam_data_run(self):
         """
@@ -192,7 +187,7 @@ class DashCamData(mo.MMALPythonComponent):
                 self.dashcam_overlay_text_image = img
 
             # Sleep to release the GIL.
-            sleep(0.5)
+            sleep(1)
 
     def _handle_frame(self, port, buf):
         # We check if we have data for the frame
@@ -286,7 +281,7 @@ class DashCam:
 
         # Create the filename that we're going to record to.
         self._filename = datetime.now().strftime(
-                "/mnt/storage/%Y-%m-%d-%H-%M-%S.mp4"
+                "%Y-%m-%d-%H-%M-%S.mp4"
                 )
 
 
@@ -307,7 +302,9 @@ class DashCam:
                 "-f",
                 "alsa",
                 "-thread_queue_size",
-                "10240",
+                "2048",
+                "-use_wallclock_as_timestamps",
+                "1",
                 "-i",
                 "hw:2,0",
                 "-f",
@@ -318,6 +315,8 @@ class DashCam:
                 str(self._fps),
                 "-thread_queue_size",
                 "10240",
+                "-use_wallclock_as_timestamps",
+                "1",
                 "-i",
                 "-",  # Read from stdin
                 "-crf",
@@ -415,7 +414,6 @@ class DashCam:
             self.set_hflip(True)
         self.__camera.control.params[mmal.MMAL_PARAMETER_VIDEO_STABILISATION] = True
         mp = self.__camera.control.params[mmal.MMAL_PARAMETER_EXPOSURE_MODE]
-        print(mp)
         mp.value = mmal.MMAL_PARAM_EXPOSUREMODE_AUTO
         self.__camera.control.params[mmal.MMAL_PARAMETER_EXPOSURE_MODE] = mp
         mp = self.__camera.control.params[mmal.MMAL_PARAMETER_AWB_MODE]
