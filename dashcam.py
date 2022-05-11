@@ -5,7 +5,6 @@ from datetime import datetime
 from math import isnan
 from threading import Thread, Lock
 from time import sleep
-import json
 import subprocess
 
 # Picamera
@@ -158,7 +157,7 @@ class DashCamData(mo.MMALPythonComponent):
                 self.__current_speed = int(speed * 3.6)
 
             # Sleep so that we make the thread release the GIL
-            sleep(0.3)
+            sleep(1)
 
     def _dashcam_data_run(self):
         """
@@ -281,7 +280,7 @@ class DashCam:
 
         # Create the filename that we're going to record to.
         self._filename = datetime.now().strftime(
-                "%Y-%m-%d-%H-%M-%S.mp4"
+                "/mnt/storage/%Y-%m-%d-%H-%M-%S.mp4"
                 )
 
 
@@ -302,7 +301,7 @@ class DashCam:
                 "-f",
                 "alsa",
                 "-thread_queue_size",
-                "2048",
+                "10240",
                 "-use_wallclock_as_timestamps",
                 "1",
                 "-i",
@@ -413,12 +412,12 @@ class DashCam:
         if self.__config["camera"].getboolean("hflip"):
             self.set_hflip(True)
         self.__camera.control.params[mmal.MMAL_PARAMETER_VIDEO_STABILISATION] = True
-        mp = self.__camera.control.params[mmal.MMAL_PARAMETER_EXPOSURE_MODE]
-        mp.value = mmal.MMAL_PARAM_EXPOSUREMODE_AUTO
-        self.__camera.control.params[mmal.MMAL_PARAMETER_EXPOSURE_MODE] = mp
-        mp = self.__camera.control.params[mmal.MMAL_PARAMETER_AWB_MODE]
-        mp.value = mmal.MMAL_PARAM_AWBMODE_HORIZON
-        self.__camera.control.params[mmal.MMAL_PARAMETER_AWB_MODE] = mp
+        m_p = self.__camera.control.params[mmal.MMAL_PARAMETER_EXPOSURE_MODE]
+        m_p.value = mmal.MMAL_PARAM_EXPOSUREMODE_AUTO
+        self.__camera.control.params[mmal.MMAL_PARAMETER_EXPOSURE_MODE] = m_p
+        m_p = self.__camera.control.params[mmal.MMAL_PARAMETER_AWB_MODE]
+        m_p.value = mmal.MMAL_PARAM_AWBMODE_HORIZON
+        self.__camera.control.params[mmal.MMAL_PARAMETER_AWB_MODE] = m_p
 
 
     def set_hflip(self, value):
