@@ -20,6 +20,10 @@ Works with Raspberry Pi 4. 1080p at 30 FPS.
 
 ## Notes
 
+You'll need ffmpeg installed.
+
+Copy example config to `/etc/raspberrydashcam/config.ini`.
+
 The following tuning was made in `/boot/config.txt` (not sure they're needed).
 
 ```
