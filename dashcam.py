@@ -6,6 +6,7 @@ from math import isnan
 from threading import Thread, Lock
 from time import sleep
 import subprocess
+from types import MethodType
 
 # Picamera
 from picamera import mmal, mmalobj as mo, PiCameraPortDisabled
@@ -46,7 +47,6 @@ class DashCamData(mo.MMALPythonComponent):
 
         # Set bar height pixels
         self.bar_height = 25
-        self.bottom_bar_bg = None
 
         # Calculate the position of the bottom bar where we keep important text
         # such as the date and time, and the ridiculous speeds in which we are
@@ -151,10 +151,10 @@ class DashCamData(mo.MMALPythonComponent):
             # traveling through a tunnel, or in a garage.
             # If we lost it due to the mentioned reasons we can _probably_
             # assume we're going at the same speed and should display that.
-            with self._lock:
+            #with self._lock:
                 # We get the speed in meters per second.
                 # Hence we calculate it to kilometers per hour
-                self.__current_speed = int(speed * 3.6)
+            self.__current_speed = int(speed * 3.6)
 
             # Sleep so that we make the thread release the GIL
             sleep(1)
@@ -170,7 +170,7 @@ class DashCamData(mo.MMALPythonComponent):
             img = self.bottom_bar_bg.copy()
             now = datetime.now()
             date = f"{now.year}-{now.month}-{now.day} {now.hour}:{now.minute}:{now.second}"
-            speed = "---" if self.__current_speed == 0 else self.__current_speed
+            speed = self.__current_speed
 
 
             # We start drawing the text over the black opaque
@@ -182,8 +182,8 @@ class DashCamData(mo.MMALPythonComponent):
                     font=self.__font
                     )
 
-            with self._lock:
-                self.dashcam_overlay_text_image = img
+            #with self._lock:
+            self.dashcam_overlay_text_image = img
 
             # Sleep to release the GIL.
             sleep(1)
@@ -219,18 +219,19 @@ class DashCamData(mo.MMALPythonComponent):
 
                 # use locking to be able to quickly do what we want to do
                 # And then gtfo
-                with self._lock:
-                    #if self.dashcam_overlay_text_image:
-                        # Paste our overlay over the text
-                        img.paste(
-                                self.dashcam_overlay_text_image,
-                                self.bottom_bar_position
-                                )
-                    #if self.dashcam_title_image:
-                        img.paste(
-                                self.dashcam_title_image,
-                                (0, 0)
-                                )
+
+
+
+                #with self._lock:
+                    # Paste our overlay over the text
+                img.paste(
+                        self.dashcam_title_image,
+                        (0, 0)
+                        )
+                img.paste(
+                        self.dashcam_overlay_text_image,
+                        self.bottom_bar_position
+                        )
 
             # If we have a second output that is probably the preview.
             # We therefor copy the same data to it.
@@ -240,11 +241,8 @@ class DashCamData(mo.MMALPythonComponent):
                 out2.replicate(out1)
             try:
                 self.outputs[0].send_buffer(out1)
-            except PiCameraPortDisabled:
-                return True
-        if out2:
-            try:
                 self.outputs[1].send_buffer(out2)
+
             except PiCameraPortDisabled:
                 return True
 
@@ -262,7 +260,7 @@ class DashCam:
         self.__resolutions = {
                 # 'short': [fps, (width, height)]
                 '720p': [30, (1280, 720)],
-                '1080p': [24, (1920, 1080)],
+                '1080p': [30, (1920, 1088)],
                 }
         self.__config = ConfigParser()
 
@@ -317,7 +315,7 @@ class DashCam:
                 "-i",
                 "-",  # Read from stdin
                 "-crf",
-                "22",
+                "20",
                 "-vcodec",
                 "copy",
                 "-acodec",
@@ -337,7 +335,7 @@ class DashCam:
         self.__preview = mo.MMALRenderer()
         self.__encoder = mo.MMALVideoEncoder()
         self.__dashcam_data = DashCamData(
-                title=self._title,
+                title=self.__config["dashcam"]["title"],
                 resolution=self._resolution
                 )
 
@@ -376,7 +374,7 @@ class DashCam:
         # Modify the proflle
         # Set the profile to MMAL_VIDEO_PROFILE_H264_HIGH
         profile.profile[0].profile = mmal.MMAL_VIDEO_PROFILE_H264_HIGH
-        profile.profile[0].level = mmal.MMAL_VIDEO_LEVEL_H264_4
+        profile.profile[0].level = mmal.MMAL_VIDEO_LEVEL_H264_42
 
         # Now make sure encoder get's the modified profile
         self.__encoder.outputs[0].params[mmal.MMAL_PARAMETER_PROFILE] = profile
@@ -385,7 +383,7 @@ class DashCam:
         # which I do not yet know what they do.
         self.__encoder.outputs[0].params[
                 mmal.MMAL_PARAMETER_VIDEO_ENCODE_INLINE_HEADER] = True
-        self.__encoder.outputs[0].params[mmal.MMAL_PARAMETER_INTRAPERIOD] = 48
+        self.__encoder.outputs[0].params[mmal.MMAL_PARAMETER_INTRAPERIOD] = self._fps * 2
         self.__encoder.outputs[0].params[
                 mmal.MMAL_PARAMETER_VIDEO_ENCODE_INITIAL_QUANT] = 17
         self.__encoder.outputs[0].params[
