@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 # Stdlibs
+import atexit
 from configparser import ConfigParser
 from datetime import datetime
 from math import isnan
+from os import killpg, getpgid, setsid
 from threading import Thread, Lock
 from time import sleep
+import signal
 import subprocess
 
 # Picamera
@@ -289,7 +292,7 @@ class DashCam:
                 "-probesize",
                 "10M",
                 "-r",
-                self.__config["camera"]["fps"],
+                str(self.__config["camera"]["fps"]),
                 "-thread_queue_size",
                 "10240",
                 "-use_wallclock_as_timestamps",
@@ -332,7 +335,8 @@ class DashCam:
                     self.__ffmpeg_command
                     ),
                 shell=True,
-                stdin=subprocess.PIPE
+                stdin=subprocess.PIPE,
+                preexec_fn=setsid
                 )
 
         # Here we specify that the script should write to stdin of the
@@ -364,7 +368,7 @@ class DashCam:
         # Modify the proflle
         # Set the profile to MMAL_VIDEO_PROFILE_H264_HIGH
         profile.profile[0].profile = mmal.MMAL_VIDEO_PROFILE_H264_HIGH
-        profile.profile[0].level = mmal.MMAL_VIDEO_LEVEL_H264_42
+        profile.profile[0].level = mmal.MMAL_VIDEO_LEVEL_H264_41
 
         # Now make sure encoder get's the modified profile
         self.__encoder.outputs[0].params[mmal.MMAL_PARAMETER_PROFILE] = profile
@@ -376,11 +380,11 @@ class DashCam:
         self.__encoder.outputs[0].params[
                 mmal.MMAL_PARAMETER_INTRAPERIOD] = int(self.__config["camera"]["fps"]) * 2
         self.__encoder.outputs[0].params[
-                mmal.MMAL_PARAMETER_VIDEO_ENCODE_INITIAL_QUANT] = 17
+                mmal.MMAL_PARAMETER_VIDEO_ENCODE_INITIAL_QUANT] = 25
         self.__encoder.outputs[0].params[
-                mmal.MMAL_PARAMETER_VIDEO_ENCODE_MAX_QUANT] = 17
+                mmal.MMAL_PARAMETER_VIDEO_ENCODE_MAX_QUANT] = 25
         self.__encoder.outputs[0].params[
-                mmal.MMAL_PARAMETER_VIDEO_ENCODE_MIN_QUANT] = 17
+                mmal.MMAL_PARAMETER_VIDEO_ENCODE_MIN_QUANT] = 10
 
         # Stolen from picamera module, very clever stuff
         self.__mirror_parameter = {
@@ -460,6 +464,9 @@ class DashCam:
         Tear everything down, it probably means we're shutting down.
         """
 
+        print("Stopping dashcam")
+
+
         # First disable the components
         self.__target.disable()
         self.__encoder.disable()
@@ -472,8 +479,13 @@ class DashCam:
         self.__preview.inputs[0].disconnect()
         self.__dashcam_data.inputs[0].disconnect()
 
-        # Shut down ffmpeg recording
-        self.__ffmpeg_instance.terminate()
+        killpg(
+                getpgid(
+                    self.__ffmpeg_instance.pid
+                    ),
+                signal.SIGTERM
+                )
+
         self.__enabled = False
 
     def run(self):
@@ -486,12 +498,26 @@ class DashCam:
         while self.__enabled:
             sleep(10)
 
+def signal_handler(signal, frame):
+    """
+    Handles signals sent
+    needed for clean shutdown
+    in docker
+    """
+    print("got", signal)
+    raise LetsDieException
+
+
+class LetsDieException(Exception):
+    pass
 
 if __name__ == '__main__':
     d = DashCam()
+    signal.signal(signal.SIGTERM, signal_handler)
+
     try:
         d.connect()
         print("Starting video recording")
         d.run()
-    except KeyboardInterrupt:
+    except LetsDieException:
         d.disconnect()
