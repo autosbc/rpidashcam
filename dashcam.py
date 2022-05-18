@@ -159,7 +159,7 @@ class DashCamData(mo.MMALPythonComponent):
             self.__current_speed = int(speed * 3.6)
 
             # Sleep so that we make the thread release the GIL
-            sleep(1)
+            sleep(0.5)
 
     def _dashcam_data_run(self):
         """

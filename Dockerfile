@@ -1,4 +1,4 @@
-FROM python:3.10.4-slim-buster
+FROM python:3.10.4-slim-buster AS bob-the-builder
 
 ENV READTHEDOCS=True
 
@@ -17,17 +17,24 @@ RUN apt-get update \
                 cmake \
     && pip install --upgrade pip \
     && pip install --no-cache-dir setuptools \
-    && pip install -v --no-cache-dir \
+    && pip install \
+		--no-cache-dir \
 		gps \
 		picamera \
 		pillow \
     && apt-get -yqq --purge remove \
-		gcc \
 		cmake \
+		gcc \
+		gcc-8 \
+		gpg \
     && apt-get clean \
     && apt-get autoclean \
     && rm -rf /var/lib/apt/lists/* \
     && echo "done!"
+
+FROM scratch
+
+COPY --from=bob-the-builder / /
 
 COPY dashcam.py /usr/local/bin
 
@@ -36,8 +43,11 @@ COPY mmalobj.py /usr/local/lib/python3.10/site-packages/picamera
 
 # Overwrite gps.py because it didnt catch up with newer python
 COPY client.py /usr/local/lib/python3.10/site-packages/gps/
+
 # Copy font
 COPY font/game_over.ttf /usr/share/fonts
+
 ENV LD_LIBRARY_PATH /opt/vc/lib
+
 VOLUME ["/mnt/storage"]
 ENTRYPOINT ["/usr/local/bin/dashcam.py"]
