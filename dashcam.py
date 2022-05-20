@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 # Stdlibs
+import atexit
 from configparser import ConfigParser
 from datetime import datetime
 from math import isnan
+from os import killpg, getpgid, setsid
 from threading import Thread, Lock
 from time import sleep
+import signal
 import subprocess
-from types import MethodType
 
 # Picamera
 from picamera import mmal, mmalobj as mo, PiCameraPortDisabled
@@ -95,7 +97,7 @@ class DashCamData(mo.MMALPythonComponent):
         draw.rectangle(((0, 0), (self.width, self.bar_height)), (0, 0, 0, 128))
 
         # Initialize GPS
-        self.__gps = gps(mode=WATCH_ENABLE | WATCH_NEWSTYLE)
+        self.__gps = gps(host='172.17.0.1', mode=WATCH_ENABLE | WATCH_NEWSTYLE)
         self.__gps.next()
         self.__gps_thread = None
 
@@ -157,7 +159,7 @@ class DashCamData(mo.MMALPythonComponent):
             self.__current_speed = int(speed * 3.6)
 
             # Sleep so that we make the thread release the GIL
-            sleep(1)
+            sleep(0.5)
 
     def _dashcam_data_run(self):
         """
@@ -257,33 +259,16 @@ class DashCam:
 
         self.__enabled = False
 
-        self.__resolutions = {
-                # 'short': [fps, (width, height)]
-                '720p': [30, (1280, 720)],
-                '1080p': [30, (1920, 1088)],
-                }
         self.__config = ConfigParser()
 
         self.__config.read("/etc/raspberrydashcam/config.ini")
 
         # Set up the basic stuff
-        self._title = self.__config["dashcam"]["title"]
-        self._fps, self._resolution = self.__resolutions[
-                self.__config["camera"]["resolution"]
-                ]
-
-        self._bitrate = int(self.__config["camera"]["bitrate"])
-
-        # Create the filename that we're going to record to.
-        self._filename = datetime.now().strftime(
-                "/mnt/storage/%Y-%m-%d-%H-%M-%S.mp4"
-                )
-
 
         # This is the ffmpeg command we will run
         self.__ffmpeg_command = [
                 "/usr/bin/ffmpeg",
-                #"-loglevel quiet -stats",
+                "-loglevel quiet -stats",
                 "-async",
                 "1",
                 "-vsync",
@@ -307,7 +292,7 @@ class DashCam:
                 "-probesize",
                 "10M",
                 "-r",
-                str(self._fps),
+                str(self.__config["camera"]["fps"]),
                 "-thread_queue_size",
                 "10240",
                 "-use_wallclock_as_timestamps",
@@ -323,12 +308,14 @@ class DashCam:
                 "-ab",
                 "128k",
                 "-g",
-                str(self._fps * 2),  # GOP should be double the fps.
+                str(int(self.__config["camera"]["fps"]) * 2),  # GOP should be double the fps.
                 "-r",
-                str(self._fps),
+                str(self.__config["camera"]["fps"]),
                 "-f",
                 "mp4",
-                self._filename
+                datetime.now().strftime(
+                    "/mnt/storage/%Y-%m-%d-%H-%M-%S.mp4"
+                    )
                 ]
 
         self.__camera = mo.MMALCamera()
@@ -336,7 +323,9 @@ class DashCam:
         self.__encoder = mo.MMALVideoEncoder()
         self.__dashcam_data = DashCamData(
                 title=self.__config["dashcam"]["title"],
-                resolution=self._resolution
+                resolution=tuple(
+                    map(
+                        int, self.__config["camera"]["resolution"].split('x')))
                 )
 
         # Here we start the ffmpeg process and at the same time
@@ -346,7 +335,8 @@ class DashCam:
                     self.__ffmpeg_command
                     ),
                 shell=True,
-                stdin=subprocess.PIPE
+                stdin=subprocess.PIPE,
+                preexec_fn=setsid
                 )
 
         # Here we specify that the script should write to stdin of the
@@ -354,15 +344,19 @@ class DashCam:
         self.__target = mo.MMALPythonTarget(self.__ffmpeg_instance.stdin)
 
         # Setup resolution and fps
-        self.__camera.outputs[0].framesize = self._resolution
-        self.__camera.outputs[0].framerate = self._fps
+        self.__camera.outputs[0].framesize = tuple(
+                map(
+                    int, self.__config["camera"]["resolution"].split('x')
+                    )
+                )
+        self.__camera.outputs[0].framerate = int(self.__config["camera"]["fps"])
 
         # Commit the two previous changes
         self.__camera.outputs[0].commit()
 
         # Do base configuration of encoder.
         self.__encoder.outputs[0].format = mmal.MMAL_ENCODING_H264
-        self.__encoder.outputs[0].bitrate = self._bitrate
+        self.__encoder.outputs[0].bitrate = int(self.__config["camera"]["bitrate"])
 
         # Commit the encoder changes.
         self.__encoder.outputs[0].commit()
@@ -374,7 +368,7 @@ class DashCam:
         # Modify the proflle
         # Set the profile to MMAL_VIDEO_PROFILE_H264_HIGH
         profile.profile[0].profile = mmal.MMAL_VIDEO_PROFILE_H264_HIGH
-        profile.profile[0].level = mmal.MMAL_VIDEO_LEVEL_H264_42
+        profile.profile[0].level = mmal.MMAL_VIDEO_LEVEL_H264_41
 
         # Now make sure encoder get's the modified profile
         self.__encoder.outputs[0].params[mmal.MMAL_PARAMETER_PROFILE] = profile
@@ -383,13 +377,14 @@ class DashCam:
         # which I do not yet know what they do.
         self.__encoder.outputs[0].params[
                 mmal.MMAL_PARAMETER_VIDEO_ENCODE_INLINE_HEADER] = True
-        self.__encoder.outputs[0].params[mmal.MMAL_PARAMETER_INTRAPERIOD] = self._fps * 2
         self.__encoder.outputs[0].params[
-                mmal.MMAL_PARAMETER_VIDEO_ENCODE_INITIAL_QUANT] = 17
+                mmal.MMAL_PARAMETER_INTRAPERIOD] = int(self.__config["camera"]["fps"]) * 2
         self.__encoder.outputs[0].params[
-                mmal.MMAL_PARAMETER_VIDEO_ENCODE_MAX_QUANT] = 17
+                mmal.MMAL_PARAMETER_VIDEO_ENCODE_INITIAL_QUANT] = 25
         self.__encoder.outputs[0].params[
-                mmal.MMAL_PARAMETER_VIDEO_ENCODE_MIN_QUANT] = 17
+                mmal.MMAL_PARAMETER_VIDEO_ENCODE_MAX_QUANT] = 25
+        self.__encoder.outputs[0].params[
+                mmal.MMAL_PARAMETER_VIDEO_ENCODE_MIN_QUANT] = 10
 
         # Stolen from picamera module, very clever stuff
         self.__mirror_parameter = {
@@ -469,6 +464,9 @@ class DashCam:
         Tear everything down, it probably means we're shutting down.
         """
 
+        print("Stopping dashcam")
+
+
         # First disable the components
         self.__target.disable()
         self.__encoder.disable()
@@ -481,8 +479,13 @@ class DashCam:
         self.__preview.inputs[0].disconnect()
         self.__dashcam_data.inputs[0].disconnect()
 
-        # Shut down ffmpeg recording
-        self.__ffmpeg_instance.terminate()
+        killpg(
+                getpgid(
+                    self.__ffmpeg_instance.pid
+                    ),
+                signal.SIGTERM
+                )
+
         self.__enabled = False
 
     def run(self):
@@ -495,12 +498,26 @@ class DashCam:
         while self.__enabled:
             sleep(10)
 
+def signal_handler(signal, frame):
+    """
+    Handles signals sent
+    needed for clean shutdown
+    in docker
+    """
+    print("got", signal)
+    raise LetsDieException
+
+
+class LetsDieException(Exception):
+    pass
 
 if __name__ == '__main__':
     d = DashCam()
+    signal.signal(signal.SIGTERM, signal_handler)
+
     try:
         d.connect()
         print("Starting video recording")
         d.run()
-    except KeyboardInterrupt:
+    except LetsDieException:
         d.disconnect()
